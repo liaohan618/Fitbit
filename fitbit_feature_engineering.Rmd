@@ -1,0 +1,35 @@
+---
+title: "fitbit_feature_engineering"
+author: "Liaohan Wang"
+date: "2023-12-25"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(tidymodels)
+
+fitbit_df <- read.csv('fitbit_data.csv')
+head(fitbit_df, 5)
+```
+
+Split Data
+```{r}
+split <- initial_split(fitbit_df, prop=0.1)
+train <- training(split)
+test <- testing(split)
+```
+
+Diagnosis Plot
+```{r}
+
+```
+
+
+Transformation
+```{r}
+
+```
+
