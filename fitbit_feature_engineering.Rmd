@@ -1,35 +1,259 @@
 ---
-title: "fitbit_feature_engineering"
-author: "Liaohan Wang"
-date: "2023-12-25"
+title: "Fitbit Sleep Score Model Feature Engineering"
 output: pdf_document
 ---
-
 ```{r}
 library(tidyverse)
 library(dplyr)
 library(ggplot2)
 library(tidymodels)
-
-fitbit_df <- read.csv('fitbit_data.csv')
-head(fitbit_df, 5)
+library(car)
+library(yardstick)
 ```
 
-Split Data
+# Goal : How is sleep_score calculated? -> Find a model that best estimate sleep_score
+
+After I built these models, I looked up fitbit website on their explanation of sleep score. They mentioned that sleep score is mainly based on heart beat and sleeping stages (deep sleep, awake, REM, etc.), which I realized that my dataset fitbit_df does not contain that specific data about the sleeping stages. 
+Based on the variables I have, the number of minutes of deep sleep indeed is an important predictor. 
+The most significant predictor is stress_score, while the correlation between sleep_score and stress_score is around 0.34, which is not that strong. This might due to the reason that stress score is calculated using similar predictors.
+
 ```{r}
-split <- initial_split(fitbit_df, prop=0.1)
+fitbit_df <- read.csv('fitbit_data.csv')
+fitbit_df$date <- as.Date(fitbit_df$date) # convert to date format
+head(fitbit_df)
+```
+# Split Data
+```{r}
+set.seed(123)
+split <- initial_split(fitbit_df, prop=0.9)
 train <- training(split)
 test <- testing(split)
 ```
 
-Diagnosis Plot
+# m0 : Initial Linear Model (without recipe, use original train data, all predictors)
+rsq = 0.5789
+rse = 4.135
 ```{r}
+m1 <- lm(data=train, sleep_score ~ .)
+summary(m1)
+par(mfrow=c(2,2))
+plot(m1)
+```
+
+# m1 : Linear Regression (with recipe, use original train data, all predictors)
+rsq = 0.6826
+mrse = 3.432731	
+R-Squared increased by around 0.11, which means approximately 11% more of the variability in the dependent variable is explained by the predictors.
+In the recipe, for all numerical predictors, I  normalized, Yeo-Johnson transformed, and removed correlations with threshold = 0.5. I tested several threshold for step_corr() and there is no significant difference.
+Since there is also a date predictor, I added step_date() and step_holiday() and it turned out to be very helpful on improving the new model.
+```{r}
+m1 <- linear_reg()
+
+m1_recipe <- recipe(data=train, sleep_score ~ .) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_date(date, features = c("dow", "month", "year")) %>%
+  step_holiday(date) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.5) %>%
+  step_YeoJohnson(all_numeric_predictors()) 
+
+m1_wkfl <- workflow() %>%
+  add_model(m1) %>%
+  add_recipe(m1_recipe)
+
+m1_fit <- m1_wkfl %>%
+  fit(data=train)
+
+m1_aug <- m1_fit %>% 
+  augment(test) 
+
+m1_aug %>% 
+  metrics(truth = sleep_score, estimate = .pred)
+```
+
+The most significant predictors are 'stress_score', 'deep_sleep_min', and 'date_monthJul'. One important thing need to be noticed is that there are several months seem to have unusual sleep_scores that are shown below, such as July, August, and September. These 3 consecutive months happen to be Summer break, which makes sense. 
+Before these models listed, I was thinking of getting rid of 'date' column and leave all numeric columns since I was treating 'date' as ID od the dates. And the rsq was even lower at that time. After I tried adding 'date' back and also adding step_date() and step_holiday(), the model works a lot better!
+```{r}
+library(vip)
+m1_fit %>%
+  extract_fit_parsnip() %>%
+  vip(aesthetics = list(fill = "#00B0B9"))
+```
+
+# m2 : Reduced Linear Regression (with recipe, use original train data, reduced predictors)
+rsq = 0.7692907	
+mrse = 2.916
+This time I only chose predictors that are ranked as 'highly important' by vip function. R-Squared increased by 0.19, and mrse keep reducing! 
+```{r}
+m2 <- linear_reg() %>%
+  set_engine("lm") %>%
+  set_mode("regression")
+
+m2_recipe <- recipe(data=train, sleep_score ~ stress_score + deep_sleep_min + date) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_date(date, features = c("dow", "month", "year")) %>%
+  step_holiday(date) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.5) %>%
+  step_YeoJohnson(all_numeric_predictors()) 
+
+m2_wkfl <- workflow() %>%
+  add_model(m2) %>%
+  add_recipe(m2_recipe)
+
+m2_fit <- m2_wkfl %>%
+  fit(data=train)
+
+m2_aug <- m2_fit %>% 
+  augment(test) 
+
+m2_aug %>% 
+  metrics(truth = sleep_score, estimate = .pred)
+```
+
+Is YeoJohnson the best transformation for all numeric predictors? First of all, all (total of 2) numeric predictors I will be using, which are 'stress_score' and 'deep_sleep_min', are hard to tell if normally distributed and might need transformation.
+
+Conclusion : After binning, they show a normally distributed pattern with slight skewness. I tried log and box-cox transformation and they do not work. Without Yeo-Johnson, the fitting is slightly slower. So I keep the step_TeoJohnson() step in recipe.
+
+## Binning : stress_score
+Figure 1 shows how it is distributed. Figure 2 is after log-transformation and it does not look well. So maybe it does not need a log transformation? I tried to fit them into 10 bins and now it indeed look like normally distributed. 
+```{r}
+library(ggplot2)
+ggplot(data=train, aes(x=stress_score)) + geom_histogram()
+
+# log trans <- NOT working well
+ggplot(data=train, aes(x=log(stress_score))) + geom_histogram()
+
+# binning <- work well!!
+stress_bins <- cut(train$stress_score, breaks = 10)  # 10 bins
+stress_binned <- data.frame(stress_score = train$stress_score, stress_bins)
+ggplot(stress_binned, aes(x = stress_bins)) +
+  geom_bar(fill = "#00B0B9") +
+  labs(title = "Distribution with Binned Stress Scores", x = "Stress Score Bins", y = "Count")
+
+```
+## Binning : deep_sleep_min
+Same for deep_sleep_min, after binning, despite it looks left-skewed, it still shows a normally distributed pattern. 
+```{r}
+ggplot(data=train, aes(x=deep_sleep_min)) + geom_histogram()
+
+# log transformation <- worse
+ggplot(data=train, aes(x=log(deep_sleep_min))) + geom_histogram()
+
+# binning
+deep_bins <- cut(train$deep_sleep_min, breaks = 10)
+deep_binned <- data.frame(deep_sleep_min = train$deep_sleep_min, deep_bins)
+ggplot(deep_binned, aes(x = deep_bins)) +
+  geom_bar(fill="#00B0B9")+
+  labs(title = "Distribution with Binned Deep Sleep Minutes", x = "Deep Sleep Minutes Bins", y = "Count")
 
 ```
 
 
-Transformation
-```{r}
+# Influential Points
 
+The last step I did is to check influential points such as Leverage Points and Outliers. Both are not working with workflow so I have to create a lm model with the same predictors I am using for reduced (better) model.
+```{r}
+lm <- lm(data=train, sleep_score ~ stress_score + deep_sleep_min + date)
+summary(lm)
+par(mfrow=c(2,2))
+plot(lm)
 ```
+## Leverage Points :   9  38 147  15  11 25  36  83 105 124 
+```{r}
+leverage_values <- hatvalues(lm)
+n <- nrow(train)
+k <- 3  # Number of predictors
+leverage_threshold <- 3 * k / n
+high_leverage_points <- which(leverage_values > leverage_threshold)
+
+print(high_leverage_points)
+
+leverage_df <- data.frame(
+  Observation = 1:nrow(train),
+  Leverage = leverage_values
+)
+
+ggplot(leverage_df, aes(x = Observation, y = Leverage)) +
+  geom_point(color = "#00B0B9") +
+  geom_point(data = leverage_df[high_leverage_points, ], color = "red", size = 3) +
+  ggtitle("Leverage Values") +
+  xlab("Observation Index") +
+  ylab("Leverage Value") +
+  theme_minimal()
+```
+## Outliers : 36 122 124 132 133
+```{r}
+q <- quantile(train$sleep_score, c(0.25, 0.75))
+iqr <- IQR(train$sleep_score)
+threshold <- 1.5 * iqr
+outliers <- which(train$sleep_score < (q[1] - threshold) | train$sleep_score > (q[2] + threshold))
+print(outliers)
+
+boxplot(train$sleep_score, main = "Boxplot of Sleep Score with Outliers",
+        ylab = "Sleep Score", col = "lightblue", pch = 19)
+points(outliers, train$sleep_score[outliers], col = "red", pch = 19)
+```
+
+
+# m3 : Final Model (with recipe, reduced predictors, reduced train data)
+
+rsq = 0.79
+rmse = 2.6244766	
+
+R-Squared once again increased by around 0.02, which is approxmately 2% of more data points could be explained by predictors. rmse once again reduced by around 0.3. 
+This model is trained by the reduced training data, cleaned_train, which removed data points that are both determined as high leverage points and outliers from the previous steps.
+Others stay the same as m2 model.
+```{r}
+# new reduced train data
+combined_outliers <- intersect(high_leverage_points, outliers)
+cleaned_train <- train[-combined_outliers, ]
+
+m3 <- linear_reg() %>%
+  set_engine("lm") %>%
+  set_mode("regression")
+
+m3_recipe <- recipe(data=cleaned_train, sleep_score ~ stress_score + deep_sleep_min + date) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_date(date, features = c("dow", "month", "year")) %>%
+  step_holiday(date) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.5) %>%
+  step_YeoJohnson(all_numeric_predictors()) 
+
+m3_wkfl <- workflow() %>%
+  add_model(m3) %>%
+  add_recipe(m3_recipe)
+
+m3_fit <- m3_wkfl %>%
+  fit(data=cleaned_train)
+
+m3_aug <- m3_fit %>% 
+  augment(test) 
+
+m3_aug %>% 
+  metrics(truth = sleep_score, estimate = .pred)
+```
+
+# Evaluation of Final Model m3
+```{r}
+m3_pred <- test %>%
+  bind_cols(m3_fit %>%
+    predict(new_data = test) %>% # inside of bind_cols()
+    rename(predictions = .pred))
+
+m3_pred %>%
+  select(c(sleep_score, predictions)) %>%
+  slice_head(n = 5)
+```
+
+```{r}
+m3_pred %>% 
+  ggplot(mapping = aes(x = sleep_score, y = predictions)) +
+  geom_point(size = 3, color = "#00B0B9") +  
+  geom_smooth(method = "lm", se = FALSE, color = 'magenta') +
+  ggtitle("m3 Predictions vs. True Values") +
+  xlab("Actual Labels") +
+  ylab("Predicted Labels") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Besides of models shown above, I have also tried Random Forest, Gradient Boosting, LASSO, Ridge. Some are not working (LASSO, Ridge), others (Random Forest, Gradient Boosting) are not working as good as Linear Regression model m3.
 
