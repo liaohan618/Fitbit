@@ -1,0 +1,177 @@
+
+GOAL : predict sleep_score without stress_score
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(tidymodels)
+library(car)
+library(yardstick)
+```
+
+```{r}
+fitbit_df <- read.csv('fitbit_data1.csv')
+fitbit_df <- fitbit_df %>% select(-stress_score)
+fitbit_df$date <- as.Date(fitbit_df$date)
+head(fitbit_df)
+```
+
+# Split Data
+```{r}
+set.seed(123)
+split <- initial_split(fitbit_df, prop=0.9)
+train <- training(split)
+test <- testing(split)
+```
+
+
+# Influential Points
+```{r}
+lm <- lm(data=fitbit_df, sleep_score ~ .)
+summary(lm)
+par(mfrow=c(2,2))
+plot(lm)
+```
+
+## Leverage Points :   9  38 147  15  11 25  36  83 105 124 
+```{r}
+leverage_values <- hatvalues(lm)
+n <- nrow(train)
+k <- 2  # Number of predictors
+leverage_threshold <- 3 * k / n
+high_leverage_points <- which(leverage_values > leverage_threshold)
+
+print(high_leverage_points)
+```
+
+## Outliers : 36 122 124 132 133
+```{r}
+q <- quantile(train$sleep_score, c(0.25, 0.75))
+iqr <- IQR(train$sleep_score)
+threshold <- 1.5 * iqr
+outliers <- which(train$sleep_score < (q[1] - threshold) | train$sleep_score > (q[2] + threshold))
+print(outliers)
+
+boxplot(train$sleep_score, main = "Boxplot of Sleep Score with Outliers",
+        ylab = "Sleep Score", col = "lightblue", pch = 19)
+points(outliers, train$sleep_score[outliers], col = "red", pch = 19)
+```
+
+```{r}
+# new reduced train data
+combined_outliers <- intersect(high_leverage_points, outliers)
+train <- train[-combined_outliers, ]
+```
+
+
+
+# m1
+```{r}
+m1 <- linear_reg()
+
+m1_recipe <- recipe(data=train, sleep_score ~ .) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_date(date, features = c("dow", "month", "year")) %>%
+  step_holiday(date) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.5) %>%
+  step_YeoJohnson(all_numeric_predictors()) 
+  
+
+m1_wkfl <- workflow() %>%
+  add_model(m1) %>%
+  add_recipe(m1_recipe)
+
+m1_fit <- m1_wkfl %>%
+  fit(data=train)
+
+m1_aug <- m1_fit %>% 
+  augment(test) 
+
+m1_aug %>% 
+  metrics(truth = sleep_score, estimate = .pred)
+```
+
+# m2 : selected predictors
+```{r}
+library(vip)
+m1_fit %>%
+  extract_fit_parsnip() %>%
+  vip(aesthetics = list(fill = "#00B0B9"))
+```
+
+```{r}
+m2 <- linear_reg()
+
+m2_recipe <- recipe(data=train, sleep_score ~ date+deep_sleep_min+AZM_minutes+o2_avg+resting_heart_rate) %>%
+    step_normalize(all_numeric_predictors()) %>%
+    step_date(date, features = c("dow", "month", "year")) %>%
+    step_holiday(date) %>%
+    step_corr(all_numeric_predictors(), threshold = 0.5) %>%
+    step_YeoJohnson(all_numeric_predictors()) 
+  
+m2_wkfl <- workflow() %>%
+  add_model(m2) %>%
+  add_recipe(m2_recipe)
+  
+m2_fit <- m2_wkfl %>%
+  fit(data=train)
+  
+m2_aug <- m2_fit %>% 
+  augment(test) 
+  
+m2_aug %>% 
+  metrics(truth = sleep_score, estimate = .pred)
+```
+
+# m3
+```{r}
+m3 <- linear_reg()
+
+m3_recipe <- recipe(data=train, sleep_score ~ date+deep_sleep_min+AZM_minutes) %>%
+    step_normalize(all_numeric_predictors()) %>%
+    step_date(date, features = c("dow", "month", "year")) %>%
+    step_holiday(date) %>%
+    step_corr(all_numeric_predictors(), threshold = 0.5) %>%
+    step_YeoJohnson(all_numeric_predictors()) 
+
+m3_wkfl <- workflow() %>%
+  add_model(m3) %>%
+  add_recipe(m3_recipe)
+
+m3_fit <- m3_wkfl %>%
+  fit(data=train)
+
+m3_aug <- m3_fit %>%
+  augment(test)
+
+m3_aug %>% 
+  metrics(truth = sleep_score, estimate = .pred)
+```
+
+# m4
+rsq = 0.8137866	
+Highest rsq : after k=2 and remove influential -> 0.8291957	
+```{r}
+m4 <- linear_reg()
+
+m4_recipe <- recipe(data=train, sleep_score ~ date+deep_sleep_min) %>%
+    step_normalize(all_numeric_predictors()) %>%
+    step_date(date, features = c("dow", "month", "year")) %>%
+    step_holiday(date) %>%
+    step_corr(all_numeric_predictors(), threshold = 0.5) %>%
+    step_YeoJohnson(all_numeric_predictors()) 
+
+m4_wkfl <- workflow() %>%
+  add_model(m4) %>%
+  add_recipe(m4_recipe)
+
+m4_fit <- m4_wkfl %>%
+  fit(data=train)
+
+m4_aug <- m4_fit %>%
+  augment(test)
+
+m4_aug %>% 
+  metrics(truth = sleep_score, estimate = .pred)
+```
