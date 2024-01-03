@@ -1,5 +1,10 @@
 
-GOAL : predict sleep_score without stress_score
+---
+title: "Fitbit Feature Engineering 2 : Predict sleep_score without stress_score"
+---
+
+GOAL : predict sleep_score without stress_score\\
+CONCLUSION : Model m4 has the highest rsq and lowest mrse. m4 is a linear regression model that uses predictors date and deep_sleep_min only.
 
 ```{r}
 library(tidyverse)
@@ -11,7 +16,7 @@ library(yardstick)
 ```
 
 ```{r}
-fitbit_df <- read.csv('fitbit_data1.csv')
+fitbit_df <- read.csv('fitbit_data.csv')
 fitbit_df <- fitbit_df %>% select(-stress_score)
 fitbit_df$date <- as.Date(fitbit_df$date)
 head(fitbit_df)
@@ -25,24 +30,12 @@ train <- training(split)
 test <- testing(split)
 ```
 
-
 # Influential Points
 ```{r}
 lm <- lm(data=fitbit_df, sleep_score ~ .)
 summary(lm)
 par(mfrow=c(2,2))
 plot(lm)
-```
-
-## Leverage Points :   9  38 147  15  11 25  36  83 105 124 
-```{r}
-leverage_values <- hatvalues(lm)
-n <- nrow(train)
-k <- 2  # Number of predictors
-leverage_threshold <- 3 * k / n
-high_leverage_points <- which(leverage_values > leverage_threshold)
-
-print(high_leverage_points)
 ```
 
 ## Outliers : 36 122 124 132 133
@@ -57,16 +50,14 @@ boxplot(train$sleep_score, main = "Boxplot of Sleep Score with Outliers",
         ylab = "Sleep Score", col = "lightblue", pch = 19)
 points(outliers, train$sleep_score[outliers], col = "red", pch = 19)
 ```
-
+# New train set after removing outliers
 ```{r}
-# new reduced train data
-combined_outliers <- intersect(high_leverage_points, outliers)
-train <- train[-combined_outliers, ]
+train <- train[-outliers]
 ```
 
 
 
-# m1
+# m1 : all predictors
 ```{r}
 m1 <- linear_reg()
 
@@ -92,14 +83,7 @@ m1_aug %>%
   metrics(truth = sleep_score, estimate = .pred)
 ```
 
-# m2 : selected predictors
-```{r}
-library(vip)
-m1_fit %>%
-  extract_fit_parsnip() %>%
-  vip(aesthetics = list(fill = "#00B0B9"))
-```
-
+# m2 : 5 selected predictors based on my expectation
 ```{r}
 m2 <- linear_reg()
 
@@ -124,7 +108,14 @@ m2_aug %>%
   metrics(truth = sleep_score, estimate = .pred)
 ```
 
-# m3
+# m3 : 3 selected predictors based on importance
+```{r}
+library(vip)
+m1_fit %>%
+  extract_fit_parsnip() %>%
+  vip(aesthetics = list(fill = "#00B0B9"))
+```
+
 ```{r}
 m3 <- linear_reg()
 
@@ -149,7 +140,7 @@ m3_aug %>%
   metrics(truth = sleep_score, estimate = .pred)
 ```
 
-# m4
+# m4 : 2 selected predictors
 rsq = 0.8137866	
 Highest rsq : after k=2 and remove influential -> 0.8291957	
 ```{r}
