@@ -1,5 +1,13 @@
 # Fitbit Fitness Data Analysis & Sleep Score Modeling
 
+## Menu
+1. fitbit_EDA.ipynb : Exploratory Data Analysis on predictors with visuals
+2. fitbit_data.csv : fitbit_df
+3. fitbit_data.ipynb : Cleaning raw data into fitbit_df
+4. fitbit_feature_engineering.rmd : Linear regression model of sleep_score using date + stress_score + deep_sleep_min
+5. fitbit_feature_eng_2.rmd : Linear regression model of sleep_score using date + deep_sleep_min
+6. learned_from_fitbit.ipynv : My personal takeaway on cleaning data
+
 ## Description
 Fitbit is an electronic company that make smartwatches that could be used as fitness tracker. In this project, I analyzed my personal fitness data that were tracked by my Fitbit Inspire 3 smartwatch from late June to early December. I aim to find factors that affect my sleeping and calories burning. 
 
