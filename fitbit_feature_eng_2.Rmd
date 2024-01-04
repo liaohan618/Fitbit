@@ -1,6 +1,7 @@
 
 ---
-title: "Fitbit Feature Engineering 2 : Predict sleep_score without stress_score"
+title: 'Fitbit Feature Engineering 2 : Predict sleep_score without stress_score'
+output: pdf_document
 ---
 
 GOAL : predict sleep_score without stress_score\\

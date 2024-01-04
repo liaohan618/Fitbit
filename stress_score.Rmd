@@ -1,0 +1,120 @@
+---
+title: "stress_score"
+---
+
+GOAL : Model stress score without sleep score
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(tidymodels)
+library(car)
+library(yardstick)
+```
+
+```{r}
+fitbit_df <- read.csv('fitbit_data.csv')
+fitbit_df <- fitbit_df %>% select(-c(sleep_score))
+fitbit_df$date <- as.Date(fitbit_df$date)
+head(fitbit_df)
+```
+```{r}
+
+```
+
+# Split Data
+```{r}
+set.seed(123)
+split <- initial_split(data=fitbit_df, prop=0.9)
+train <- training(split)
+test <- testing(split)
+
+nrow(train)
+```
+
+
+m0
+```{r}
+m0 <- lm(data=train, stress_score ~ .)
+summary(m0)
+par(mfrow=c(2,2))
+plot(m0)
+```
+
+
+# m1 : all predictors
+```{r}
+m1 <- linear_reg()
+
+m1_recipe <- recipe(data=train, stress_score ~.) %>%
+  step_YeoJohnson(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.5) %>%
+  step_date(date, features = c("dow", "month", "year")) %>%
+  step_holiday(date)
+
+m11_recipe <- recipe(data=train, stress_score ~.) %>%
+  step_YeoJohnson(all_numeric_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_date(date, features = c("dow", "month", "year")) %>%
+  step_holiday(date) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.5)
+
+m1_wkfl <- workflow() %>%
+  add_recipe(m1_recipe) %>%
+  add_model(m1)
+
+m1_fit <- m1_wkfl %>%
+  fit(data=train)
+
+m1_aug <- m1_fit %>%
+  augment(test)
+
+m1_aug %>% 
+  metrics(truth = stress_score, estimate = .pred)
+```
+
+
+# importance of predictors
+```{r}
+library(vip)
+m1_fit %>%
+  extract_fit_parsnip() %>%
+  vip(aesthetics = list(fill = "#00B0B9"))
+```
+
+# m2: selected predictors
+```{r}
+m2 <- linear_reg()
+
+m2_recipe <- recipe(data=train, stress_score ~ date+AZM_minutes+deep_sleep_min+o2_avg+nremhr) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_YeoJohnson(all_numeric_predictors()) %>%
+  step_corr(all_numeric_predictors(), threshold = 0.3)
+
+m2_wkfl <- workflow() %>%
+  add_model(m2) %>%
+  add_recipe(m2_recipe)
+
+m2_fit <- m2_wkfl %>%
+  fit(data=train)
+
+m2_aug <- m2_fit %>%
+  augment(test)
+
+m2_aug %>% 
+  metrics(truth = stress_score, estimate = .pred)
+```
+
+
+```{r}
+ggplot(data=fitbit_df, aes(x=date, y=stress_score)) +
+  geom_line()
+```
+
+
+
+
+
+
